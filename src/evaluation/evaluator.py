@@ -9,13 +9,15 @@ from src.db.session import SessionLocal, engine
 
 class EvalItem:
     def __init__(self, id: int, category: str, question: str, expected_result_type: str,
-                 expected_approx: Optional[float] = None, expected_row_count: Optional[int] = None):
+                 expected_approx: Optional[float] = None, expected_row_count: Optional[int] = None,
+                 expected_value_exact: Optional[str] = None):
         self.id = id
         self.category = category
         self.question = question
         self.expected_result_type = expected_result_type
         self.expected_approx = expected_approx
         self.expected_row_count = expected_row_count
+        self.expected_value_exact = expected_value_exact
 
 
 class EvalResult:
@@ -46,6 +48,7 @@ class Evaluator:
                 expected_result_type=q["expected_result_type"],
                 expected_approx=q.get("expected_approx"),
                 expected_row_count=q.get("expected_row_count"),
+                expected_value_exact=q.get("expected_value_exact"),
             )
             for q in data
         ]
@@ -84,17 +87,36 @@ class Evaluator:
         return EvalResult(item, sql, generated, executed, correct, error)
 
     def _check_correctness(self, df, item: EvalItem) -> bool:
-        if item.expected_row_count is not None:
-            return len(df) == item.expected_row_count
+        """Check whether the result matches the expected value(s).
 
+        All expectations must hold simultaneously:
+          - expected_row_count: exact number of rows
+          - expected_approx: numeric first value within tolerance
+          - expected_value_exact: string first value, exact match
+        """
+        # Row count check (always checked if present)
+        if item.expected_row_count is not None:
+            if len(df) != item.expected_row_count:
+                return False
+
+        # Numeric approx check (scalar result type only)
         if item.expected_approx is not None and item.expected_result_type == "scalar":
             if df.empty:
                 return False
             first_val = df.iloc[0, 0]
             try:
                 actual = float(first_val)
-                return abs(actual - item.expected_approx) < 0.05 * abs(item.expected_approx)
+                if abs(actual - item.expected_approx) >= 0.05 * abs(item.expected_approx):
+                    return False
             except (ValueError, TypeError):
+                return False
+
+        # Exact string check (scalar result type only)
+        if item.expected_value_exact is not None and item.expected_result_type == "scalar":
+            if df.empty:
+                return False
+            first_val = df.iloc[0, 0]
+            if str(first_val).strip() != item.expected_value_exact.strip():
                 return False
 
         return True
