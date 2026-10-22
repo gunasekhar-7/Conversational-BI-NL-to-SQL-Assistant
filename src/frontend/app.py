@@ -33,6 +33,8 @@ if "messages" not in st.session_state:
 
 with st.sidebar:
     st.header("Settings")
+    st.checkbox("Explain the SQL", value=False, key="explain_sql",
+                help="Ask the model for a one-line plain-English summary of the generated query.")
     if st.button("🔄 Load Schema"):
         schema = call_schema_api()
         st.session_state.schema = schema
@@ -56,6 +58,8 @@ for msg in st.session_state.messages:
     if msg.get("sql"):
         with st.expander("🔍 View SQL", expanded=False):
             render_sql_block(msg["sql"])
+    if msg.get("explanation"):
+        st.info(f"💡 {msg['explanation']}")
     if msg.get("data") is not None and not msg["data"].empty:
         render_results_table(msg["data"])
         if msg.get("chart_type"):
@@ -82,7 +86,7 @@ if question:
     render_chat_message("user", question)
 
     with st.spinner("Generating SQL and executing..."):
-        response = call_query_api(question)
+        response = call_query_api(question, explain=st.session_state.get("explain_sql", False))
 
     if response.get("error"):
         error_msg = response["error"]
@@ -109,11 +113,15 @@ if question:
             "sql": sql,
             "data": df,
             "chart_type": chart_type,
+            "explanation": response.get("explanation"),
         })
 
         render_chat_message("assistant", answer)
         with st.expander("🔍 View SQL", expanded=False):
             render_sql_block(sql)
+
+        if response.get("explanation"):
+            st.info(f"💡 {response['explanation']}")
 
         if not df.empty:
             render_results_table(df)

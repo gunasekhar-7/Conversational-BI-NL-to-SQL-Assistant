@@ -4,6 +4,7 @@ from typing import Optional
 
 class QueryRequest(BaseModel):
     question: str
+    explain: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -13,6 +14,7 @@ class QueryResponse(BaseModel):
     row_count: int
     error: Optional[str] = None
     chart_suggestion: Optional[str] = None
+    explanation: Optional[str] = None
 
 
 class SchemaResponse(BaseModel):

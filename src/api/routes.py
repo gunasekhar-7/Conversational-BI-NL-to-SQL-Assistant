@@ -72,10 +72,19 @@ def query_endpoint(
     records = dataframe_to_records(df)
     chart_suggestion = suggest_chart_type(df)
 
+    explanation = None
+    if request.explain:
+        try:
+            explanation = nl_engine.explain(request.question, sql, schema_desc)
+        except Exception:
+            # The explanation is a nicety; a failure here must not fail the query.
+            explanation = None
+
     return QueryResponse(
         sql=sql,
         results=records,
         columns=list(df.columns),
         row_count=len(records),
         chart_suggestion=chart_suggestion,
+        explanation=explanation,
     )

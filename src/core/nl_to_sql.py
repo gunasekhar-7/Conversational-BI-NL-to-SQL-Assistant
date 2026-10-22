@@ -1,7 +1,7 @@
 from langchain_groq import ChatGroq
 from langchain_community.llms import Ollama
 from langchain.schema import HumanMessage, SystemMessage
-from src.core.prompts import build_prompt, FEW_SHOT_EXAMPLES
+from src.core.prompts import build_prompt, build_explain_prompt, FEW_SHOT_EXAMPLES
 from src.config import settings
 from src.core.sql_validator import validate_sql
 import re
@@ -57,6 +57,25 @@ class NLToSQL:
             raise ValueError(f"Generated unsafe SQL: {error}")
 
         return sql
+
+    def explain(self, question: str, sql: str, schema_description: str) -> str:
+        """Return a short plain-language description of an already-validated query.
+
+        This is a separate call from generate_sql so the SQL prompt keeps its
+        "output only SQL" contract. The explanation is never executed and is
+        bounded so it stays one or two sentences.
+        """
+        prompt = build_explain_prompt(question, sql, schema_description)
+
+        messages = [
+            SystemMessage(content="You explain SQL to analysts in plain language."),
+            HumanMessage(content=prompt),
+        ]
+
+        response = self.llm.invoke(messages)
+        raw = response.content if hasattr(response, 'content') else str(response)
+
+        return re.sub(r'\s+', ' ', raw).strip()[:600]
 
     def _clean_sql(self, raw: str) -> str:
         sql = raw.strip()

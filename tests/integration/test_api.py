@@ -130,3 +130,35 @@ def test_query_endpoint_unsafe_sql_rejected(client):
 
     assert response.status_code == 400
     assert "unsafe" in response.json()["detail"].lower()
+
+
+def test_query_endpoint_explain_returns_explanation(client):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    mock_engine.explain.return_value = "Returns a single constant column named test."
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
+
+    response = client.post(
+        "/api/query", json={"question": "test", "explain": True}, headers=HEADERS
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["explanation"] == "Returns a single constant column named test."
+    mock_engine.explain.assert_called_once()
+
+
+def test_query_endpoint_explain_false_skips_explanation(client):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
+
+    response = client.post(
+        "/api/query", json={"question": "test", "explain": False}, headers=HEADERS
+    )
+
+    assert response.status_code == 200
+    assert response.json()["explanation"] is None
+    mock_engine.explain.assert_not_called()

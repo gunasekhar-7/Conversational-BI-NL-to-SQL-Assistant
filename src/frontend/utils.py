@@ -12,11 +12,11 @@ def _headers() -> dict:
     return {"X-API-Key": API_KEY} if API_KEY else {}
 
 
-def call_query_api(question: str) -> dict:
+def call_query_api(question: str, explain: bool = False) -> dict:
     try:
         response = httpx.post(
             f"{API_BASE}/query",
-            json={"question": question},
+            json={"question": question, "explain": explain},
             headers=_headers(),
             timeout=30.0,
         )
