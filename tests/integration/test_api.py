@@ -1,61 +1,63 @@
+from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+
+from src.api.routes import get_nl_to_sql
+from src.db.session import get_db
 from src.main import app
 
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    test_client = TestClient(app)
+    yield test_client
+    app.dependency_overrides.clear()
 
 
-def test_health_endpoint():
-    with patch('src.api.routes.get_db') as mock_get_db:
-        mock_db = MagicMock()
-        mock_db.execute.return_value = MagicMock()
-        mock_get_db.return_value = mock_db
-
-        response = client.get("/api/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
+def make_mock_db(rows, columns):
+    db = MagicMock()
+    result = MagicMock()
+    result.fetchall.return_value = rows
+    result.keys.return_value = columns
+    db.execute.return_value = result
+    return db
 
 
-def test_query_endpoint_success():
-    with patch('src.api.routes.get_nl_to_sql') as mock_nl, \
-         patch('src.api.routes.get_db') as mock_get_db, \
-         patch('src.api.routes.inspect_schema') as mock_inspect:
+def test_health_endpoint(client):
+    app.dependency_overrides[get_db] = lambda: make_mock_db([], [])
 
-        mock_inspect.return_value = {"customers": {"columns": [], "primary_key": [], "foreign_keys": []}}
+    response = client.get("/api/health")
 
-        mock_nl_instance = MagicMock()
-        mock_nl_instance.generate_sql.return_value = "SELECT 1 as test"
-        mock_nl.return_value = mock_nl_instance
-
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [(1,)]
-        mock_result.keys.return_value = ['test']
-        mock_db = MagicMock()
-        mock_db.execute.return_value = mock_result
-        mock_get_db.return_value = mock_db
-
-        response = client.post("/api/query", json={"question": "test"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["sql"] == "SELECT 1 as test"
-        assert data["row_count"] == 1
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["database"] == "connected"
 
 
-def test_query_endpoint_unsafe_sql_rejected():
-    with patch('src.api.routes.get_nl_to_sql') as mock_nl, \
-         patch('src.api.routes.get_db') as mock_get_db, \
-         patch('src.api.routes.inspect_schema') as mock_inspect:
+def test_query_endpoint_success(client):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
 
-        mock_inspect.return_value = {}
+    response = client.post("/api/query", json={"question": "test"})
 
-        mock_nl_instance = MagicMock()
-        mock_nl_instance.generate_sql.side_effect = ValueError("Generated unsafe SQL")
-        mock_nl.return_value = mock_nl_instance
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sql"] == "SELECT 1 as test"
+    assert data["row_count"] == 1
+    assert data["results"] == [{"test": 1}]
+    mock_engine.generate_sql.assert_called_once()
 
-        response = client.post("/api/query", json={"question": "test"})
 
-        assert response.status_code == 400
+def test_query_endpoint_unsafe_sql_rejected(client):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.side_effect = ValueError("Generated unsafe SQL: Forbidden keyword: DROP")
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([], [])
+
+    response = client.post("/api/query", json={"question": "drop everything"})
+
+    assert response.status_code == 400
+    assert "unsafe" in response.json()["detail"].lower()

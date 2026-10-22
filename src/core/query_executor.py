@@ -36,23 +36,25 @@ def dataframe_to_records(df: pd.DataFrame) -> list[dict]:
 
 
 def suggest_chart_type(df: pd.DataFrame) -> str | None:
+    """Suggest a chart type for a result frame.
+
+    Contract:
+    - None when the frame is empty, has fewer than 2 columns, or has no
+      numeric column to plot.
+    - "line" when there are more than 20 rows (trend data).
+    - "scatter" when there are 3+ columns including 2+ numeric columns.
+    - "bar" otherwise (categorical vs numeric comparison). Pie is never
+      suggested automatically.
+    """
     if df.empty or len(df.columns) < 2:
         return None
 
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    non_numeric_cols = df.select_dtypes(exclude=['number']).columns.tolist()
-
-    if not numeric_cols or not non_numeric_cols:
+    if not numeric_cols:
         return None
-
-    if len(df) <= 10 and len(df.columns) == 2:
-        return "pie"
 
     if len(df) > 20:
         return "line"
-
-    if len(df.columns) == 2:
-        return "bar"
 
     if len(df.columns) >= 3 and len(numeric_cols) >= 2:
         return "scatter"

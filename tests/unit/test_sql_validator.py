@@ -20,28 +20,28 @@ def test_blocks_insert():
     sql = "INSERT INTO customers (name) VALUES ('hacker')"
     is_safe, error = validate_sql(sql)
     assert not is_safe
-    assert "SELECT" in error.lower()
+    assert "select" in error.lower()
 
 
 def test_blocks_update():
     sql = "UPDATE customers SET name = 'hacked'"
     is_safe, error = validate_sql(sql)
     assert not is_safe
-    assert "SELECT" in error.lower()
+    assert "select" in error.lower()
 
 
 def test_blocks_delete():
     sql = "DELETE FROM customers"
     is_safe, error = validate_sql(sql)
     assert not is_safe
-    assert "SELECT" in error.lower()
+    assert "select" in error.lower()
 
 
 def test_blocks_drop():
     sql = "DROP TABLE customers"
     is_safe, error = validate_sql(sql)
     assert not is_safe
-    assert "SELECT" in error.lower()
+    assert "select" in error.lower()
 
 
 def test_blocks_alter():

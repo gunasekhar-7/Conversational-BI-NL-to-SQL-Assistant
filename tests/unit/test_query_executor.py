@@ -8,7 +8,7 @@ def test_blocks_unsafe_sql():
     mock_db = MagicMock()
     df, error = execute_query("DROP TABLE customers", mock_db)
     assert df.empty
-    assert "error" in error.lower()
+    assert "select" in error.lower()
     mock_db.execute.assert_not_called()
 
 
@@ -53,12 +53,23 @@ def test_suggest_chart_line_when_many_rows():
     assert suggest_chart_type(df) == 'line'
 
 
-def test_suggest_chart_pie_when_small():
+def test_small_categorical_defaults_to_bar():
+    # Contract: no automatic pie suggestion — categorical vs numeric
+    # defaults to bar regardless of frame size.
     df = pd.DataFrame({
         'category': ['A', 'B', 'C'],
         'amount': [10, 20, 30]
     })
-    assert suggest_chart_type(df) == 'pie'
+    assert suggest_chart_type(df) == 'bar'
+
+
+def test_suggest_chart_scatter_when_multiple_numeric():
+    df = pd.DataFrame({
+        'city': ['NYC', 'LA', 'Chicago'],
+        'revenue': [100, 200, 150],
+        'orders': [5, 9, 7]
+    })
+    assert suggest_chart_type(df) == 'scatter'
 
 
 def test_suggest_chart_none_when_empty():
