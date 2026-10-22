@@ -7,7 +7,14 @@ from src.frontend.components import (
     render_chart,
     render_schema_viewer,
 )
-from src.frontend.utils import call_query_api, call_schema_api
+from src.frontend.utils import API_KEY, call_query_api, call_schema_api
+
+
+EXAMPLE_QUESTIONS = [
+    "How many customers do we have?",
+    "Show total revenue by city",
+    "What are the top 5 products by price?",
+]
 
 
 st.set_page_config(
@@ -33,7 +40,14 @@ with st.sidebar:
     if "schema" in st.session_state:
         render_schema_viewer(st.session_state.schema)
 
+    if st.session_state.messages:
+        if st.button("🧹 Clear conversation"):
+            st.session_state.messages = []
+            st.rerun()
+
     st.divider()
+    if not API_KEY:
+        st.warning("API_KEY is not set, so the API will refuse requests.", icon="⚠️")
     st.caption("Powered by LangChain + FastAPI + PostgreSQL")
 
 
@@ -48,7 +62,22 @@ for msg in st.session_state.messages:
             render_chart(msg["data"], msg["chart_type"])
 
 
-if question := st.chat_input("Ask a question about your data..."):
+question = None
+
+if not st.session_state.messages:
+    st.markdown("Ask about your data in plain English. For example:")
+    columns = st.columns(len(EXAMPLE_QUESTIONS))
+    for column, example in zip(columns, EXAMPLE_QUESTIONS):
+        if column.button(example, use_container_width=True):
+            question = example
+
+
+typed = st.chat_input("Ask a question about your data...")
+if typed:
+    question = typed
+
+
+if question:
     st.session_state.messages.append({"role": "user", "content": question})
     render_chat_message("user", question)
 
