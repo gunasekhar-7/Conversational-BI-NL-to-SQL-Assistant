@@ -91,3 +91,42 @@ def test_blocks_case_insensitive():
     sql = "dRoP tAbLe customers"
     is_safe, error = validate_sql(sql)
     assert not is_safe
+
+
+def test_allows_blocked_keyword_inside_string_literal():
+    sql = "SELECT * FROM activity_log WHERE action = 'DELETE'"
+    assert validate_sql(sql) == (True, "")
+
+
+def test_allows_multiple_keywords_inside_literals():
+    sql = "SELECT name FROM customers WHERE note = 'please update or create'"
+    assert validate_sql(sql) == (True, "")
+
+
+def test_allows_identifier_containing_keyword():
+    sql = "SELECT delete_flag, update_status FROM jobs"
+    assert validate_sql(sql) == (True, "")
+
+
+def test_blocks_select_into():
+    is_safe, error = validate_sql("SELECT * INTO evil_copy FROM customers")
+    assert not is_safe
+    assert "INTO" in error
+
+
+def test_blocks_delete_returning_cte():
+    sql = "WITH d AS (DELETE FROM customers RETURNING *) SELECT * FROM d"
+    is_safe, error = validate_sql(sql)
+    assert not is_safe
+    assert "DELETE" in error
+
+
+def test_blocks_for_update():
+    sql = "SELECT * FROM customers FOR UPDATE"
+    assert not validate_sql(sql)[0]
+
+
+def test_allows_trailing_semicolon():
+    is_safe, error = validate_sql("SELECT 1;")
+    assert is_safe
+    assert error == ""
