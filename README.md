@@ -23,7 +23,7 @@ Transform natural language questions into SQL queries with full schema awareness
 - Result set limiting (1000 rows max) prevents runaway queries
 
 ### 📊 Interactive Visualizations
-- Automatic chart type suggestion (bar, line, pie, scatter)
+- Automatic chart type suggestion (bar, line, scatter)
 - Plotly-powered interactive charts
 - Streamlit conversational UI with SQL exploration
 
@@ -71,9 +71,11 @@ cp .env.example .env
 Edit `.env`:
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/nl_to_sql
+API_KEY=change-me-before-deploy  # sent as X-API-Key header by the frontend and callers
 GROQ_API_KEY=your_groq_api_key_here
 LLM_PROVIDER=groq  # or "ollama"
 LLM_MODEL=llama-3.1-70b-versatile
+STATEMENT_TIMEOUT_MS=15000       # Postgres: cancel queries that run longer than this
 ```
 
 **Get Groq API Key:** https://console.groq.com/keys (free tier available)
@@ -124,29 +126,25 @@ Open http://localhost:8501
 python run_eval.py --questions data/eval_questions.json --save eval_report.json
 ```
 
-**Sample Output:**
+**Sample output shape:**
+
 ```
 ============================================================
 📊 NL-to-SQL EVALUATION REPORT
 ============================================================
 
-Run Date: 2025-10-31 14:23:45
+Run Date: <generated at runtime>
 Total Questions: 50
 
 📈 Overall Metrics:
-  SQL Generation Accuracy:  96.0%
-  Execution Success Rate:   94.0%
-  Execution Accuracy:       88.0%
-
-📋 By Category:
-  simple_select        9/10 (90.0%)
-  aggregation          9/10 (90.0%)
-  join                 8/10 (80.0%)
-  filter_order         10/10 (100.0%)
-  complex              7/10 (70.0%)
+  SQL Generation Accuracy:  --.-%
+  Execution Success Rate:   --.-%
+  Execution Accuracy:       --.-%
 ```
 
-Exit code: `0` if accuracy ≥ 70%, `1` otherwise (CI/CD friendly)
+**Caveat:** 41 of the 50 questions in `data/eval_questions.json` have no `expected_approx` or `expected_row_count`, so they are credited on successful execution alone. To get a true accuracy figure, add expected values to those questions.
+
+Exit code: `0` if execution accuracy >= 70%, `1` otherwise (CI/CD friendly).
 
 ## SQL Safety Proof
 
@@ -154,14 +152,18 @@ Exit code: `0` if accuracy ≥ 70%, `1` otherwise (CI/CD friendly)
 from src.core.sql_validator import validate_sql
 
 # All of these are blocked:
-validate_sql("DROP TABLE customers")           # ❌ Returns (False, "Only SELECT...")
-validate_sql("DELETE FROM orders")             # ❌ Returns (False, "Forbidden keyword: DELETE")
-validate_sql("SELECT 1; DROP TABLE users")      # ❌ Returns (False, "Multiple statements")
-validate_sql("SELECT 1 -- DROP TABLE x")        # ❌ Returns (False, "Forbidden keyword in comment")
+validate_sql("DROP TABLE customers")            # ❌ (False, "Forbidden keyword: DROP...")
+validate_sql("DELETE FROM orders")              # ❌ (False, "Forbidden keyword: DELETE...")
+validate_sql("SELECT 1; DROP TABLE users")       # ❌ (False, "Multiple SQL statements not allowed")
+validate_sql("SELECT 1 -- DROP TABLE x")         # ❌ (False, "Forbidden keyword in comment")
+validate_sql("SELECT * INTO evil FROM customers")  # ❌ (False, "SELECT ... INTO is not allowed")
 
 # Safe queries pass:
-validate_sql("SELECT * FROM customers WHERE city = 'NY'")  # ✅ (True, "")
-validate_sql("WITH cte AS (SELECT 1) SELECT * FROM cte")    # ✅ (True, "")
+validate_sql("SELECT * FROM customers WHERE action = 'DELETE'")   # ✅ (True, "")
+validate_sql("WITH cte AS (SELECT 1) SELECT * FROM cte")         # ✅ (True, "")
+
+# Token-aware: a string literal containing a keyword is data, not a command.
+validate_sql("SELECT * FROM log WHERE note = 'please update or delete me'")  # ✅ (True, "")
 ```
 
 ## Project Structure
@@ -216,24 +218,19 @@ nl-to-sql-assistant/
 | **Testing** | pytest 8.3 | Unit + integration tests |
 | **Validation** | sqlparse 0.5.1 | SQL syntax analysis |
 
-## Testing Summary
+## Testing
 
 ```bash
-$ pytest -v
-
-tests/unit/test_sql_validator.py::test_allows_simple_select           PASSED
-tests/unit/test_sql_validator.py::test_blocks_insert                  PASSED
-tests/unit/test_sql_validator.py::test_blocks_drop                    PASSED
-tests/unit/test_sql_validator.py::test_blocks_multi_statement         PASSED
-tests/unit/test_sql_validator.py::test_blocks_comment_injection       PASSED
-tests/unit/test_nl_to_sql.py::test_generate_sql_with_mock_llm         PASSED
-tests/unit/test_nl_to_sql.py::test_rejects_unsafe_llm_output          PASSED
-tests/unit/test_query_executor.py::test_blocks_unsafe_sql             PASSED
-tests/unit/test_query_executor.py::test_valid_select_returns_dataframe PASSED
-tests/integration/test_api.py::test_query_endpoint_success            PASSED
-
-=============== 50 passed in 2.34s ===============
+pytest -q
 ```
+
+The suite runs without any shell environment set (conftest defaults supply an in-memory SQLite database, a throwaway API key, and a mock LLM). As of the hardening pass:
+
+```
+50 passed in ~3s
+```
+
+Includes token-validator cases (literals, CTE deletes, SELECT INTO), row-cap wrapping tests, statement-timeout connect args, and API auth (401 without key, 200 with key).
 
 ## Deployment
 
@@ -243,32 +240,37 @@ uvicorn src.main:app --reload
 streamlit run src/frontend/app.py
 ```
 
-### Production (with Docker)
+### Production
+A basic Dockerfile skeleton:
+
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-See `Dockerfile` for full image build (multi-stage, non-root user).
+## Performance & Safety
 
-## Performance & Metrics
-
-- **SQL generation latency:** ~1.2s avg (Groq, 70B model)
-- **Query execution:** <50ms for typical SELECTs (indexed)
-- **Evaluation accuracy:** See `eval_report.json` after running evaluation
-- **Test coverage:** 85%+ core logic (validator, NL engine, executor)
+- **Statement timeout:** Postgres connections carry `statement_timeout=15000` by default (configurable via `STATEMENT_TIMEOUT_MS`), so one runaway query cannot hold a worker indefinitely.
+- **Row cap:** 1,000 rows, enforced by wrapping the query in an outer `LIMIT` subselect so a trailing `--` comment cannot disable it.
+- **API authentication:** `POST /api/query` and `GET /api/schema` require an `X-API-Key` header matching `API_KEY`. `/api/health` stays anonymous for liveness probes.
+- **Error handling:** Driver/SQL errors are logged server-side but not returned to API callers.
+- **Evaluation accuracy:** Run `python run_eval.py` to produce `eval_report.json`. Currently 41 of 50 questions lack a ground-truth expectation, so execution-success is credited as correct until you add expected values.
 
 ## Security
 
-- SQL injection prevention via `sql_validator.py`
-- Parameterized queries through SQLAlchemy ORM
-- Row limits prevent resource exhaustion
-- Environment-based credentials (no hardcoding)
-- LLM output validated before execution
+- **Token-aware SQL validator:** `sql_validator.py` walks sqlparse keyword tokens rather than scanning substrings. String literals (`WHERE action = 'DELETE'`) are treated as data; comments are scanned as an injection vector; `SELECT ... INTO` is blocked because Postgres uses it to create tables.
+- **API key required** on `/api/query` and `/schema` (constant-time compare); `/health` is unauthenticated for liveness.
+- **Row cap cannot be bypassed** by a trailing `--` comment: the cap is an outer `SELECT * FROM (...) AS _capped LIMIT n`, not an appended clause.
+- **Statement timeout** on Postgres connections stops runaway queries at the DB level.
+- **No SQL, table names or driver internals** are returned on execution failure — they go to the server log only.
+- LLM output is validated by `validate_sql` before reaching the executor.
+- Environment-based credentials via `.env` (no hardcoding).
 
 ## Author
 
