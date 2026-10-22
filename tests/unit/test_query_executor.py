@@ -1,7 +1,12 @@
-import pytest
 import pandas as pd
 from unittest.mock import MagicMock, Mock
-from src.core.query_executor import execute_query, suggest_chart_type
+
+from src.core.query_executor import (
+    EXECUTION_ERROR,
+    bounded_query,
+    execute_query,
+    suggest_chart_type,
+)
 
 
 def test_blocks_unsafe_sql():
@@ -34,7 +39,44 @@ def test_execution_error_returns_empty():
     df, error = execute_query("SELECT * FROM nonexistent", mock_db)
 
     assert df.empty
-    assert "SQL execution error" in error
+    assert error == EXECUTION_ERROR
+
+
+def test_execution_error_does_not_leak_sql_or_driver_text():
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = Exception(
+        'relation "secret_table" does not exist [SQL: SELECT * FROM secret_table]'
+    )
+
+    df, error = execute_query("SELECT * FROM secret_table", mock_db)
+
+    assert df.empty
+    assert "secret_table" not in error
+    assert "SELECT" not in error
+    assert "relation" not in error
+
+
+def test_bounded_query_wraps_with_outer_limit():
+    bounded = bounded_query("SELECT * FROM big")
+
+    assert bounded.endswith("LIMIT 1000")
+    assert "SELECT * FROM big" in bounded
+
+
+def test_bounded_query_caps_query_with_trailing_comment():
+    bounded = bounded_query("SELECT * FROM big -- keep going")
+
+    # The comment ends at the newline the wrapper inserts, leaving the closing
+    # parenthesis and the LIMIT outside it.
+    assert "-- keep going\n" in bounded
+    assert bounded.splitlines()[-1] == ") AS _capped LIMIT 1000"
+
+
+def test_bounded_query_strips_trailing_semicolon():
+    bounded = bounded_query("SELECT 1;")
+
+    assert ";\n) AS _capped" not in bounded
+    assert "SELECT 1" in bounded
 
 
 def test_suggest_chart_bar():
