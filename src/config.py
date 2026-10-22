@@ -4,6 +4,7 @@ from typing import Literal
 
 class Settings(BaseSettings):
     database_url: str
+    api_key: str
     groq_api_key: str | None = None
     llm_model: str = "llama-3.1-70b-versatile"
     llm_provider: Literal["groq", "ollama"] = "groq"

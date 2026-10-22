@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from src.db.session import get_db
 from src.db.schema_inspector import inspect_schema, format_schema_for_prompt
 from src.core.nl_to_sql import NLToSQL
 from src.core.query_executor import execute_query, suggest_chart_type, dataframe_to_records
 from src.api.schemas import QueryRequest, QueryResponse, SchemaResponse, HealthResponse
+from src.api.auth import require_api_key
 
 router = APIRouter()
 
@@ -21,7 +23,7 @@ def get_nl_to_sql() -> NLToSQL:
 @router.get("/health", response_model=HealthResponse)
 def health_check(db: Session = Depends(get_db)):
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception:
         db_status = "disconnected"
@@ -32,14 +34,14 @@ def health_check(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/schema", response_model=SchemaResponse)
+@router.get("/schema", response_model=SchemaResponse, dependencies=[Depends(require_api_key)])
 def get_schema(db: Session = Depends(get_db)):
     from src.db.session import engine
     schema = inspect_schema(engine)
     return SchemaResponse(schema=schema)
 
 
-@router.post("/query", response_model=QueryResponse)
+@router.post("/query", response_model=QueryResponse, dependencies=[Depends(require_api_key)])
 def query_endpoint(
     request: QueryRequest,
     db: Session = Depends(get_db),
