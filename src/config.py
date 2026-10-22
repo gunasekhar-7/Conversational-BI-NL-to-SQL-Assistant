@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     llm_provider: Literal["groq", "ollama"] = "groq"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
+    statement_timeout_ms: int = 15000
 
     class Config:
         env_file = ".env"
