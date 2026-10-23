@@ -14,6 +14,23 @@ from src.main import app
 HEADERS = {"X-API-Key": "test-key"}
 
 
+def _reset_rate_limits():
+    """Clear slowapi's in-memory buckets so tests cannot leak into each other."""
+    from src.api.routes import limiter
+
+    if hasattr(limiter, "reset"):
+        limiter.reset()
+    else:
+        limiter.limiter.storage.reset()
+
+
+@pytest.fixture(autouse=True)
+def clean_rate_limit():
+    _reset_rate_limits()
+    yield
+    _reset_rate_limits()
+
+
 @pytest.fixture
 def client():
     # Context manager runs the lifespan handler, so app.state.nl_engine and
@@ -99,6 +116,53 @@ def test_engine_flows_through_dependency_injection(client, monkeypatch):
 
     assert response.status_code == 200
     assert captured and captured[0] is fake_engine
+
+
+def test_query_rate_limited_after_burst(client):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
+
+    statuses = [
+        client.post("/api/query", json={"question": "q"}, headers=HEADERS).status_code
+        for _ in range(31)
+    ]
+
+    assert statuses[0] == 200, "first request must pass"
+    assert statuses[-1] == 429, f"expected the 31st request to be throttled, got {statuses[-1]}"
+    assert all(s == 429 for s in statuses[30:])
+
+
+def test_rate_limit_bucket_is_per_api_key(client, monkeypatch):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
+
+    # Exhaust the bucket for the default test key.
+    for _ in range(31):
+        last = client.post("/api/query", json={"question": "q"}, headers=HEADERS)
+    assert last.status_code == 429
+
+    # A different valid key gets its own bucket and must still succeed.
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "api_key", "second-key")
+    response = client.post(
+        "/api/query",
+        json={"question": "q"},
+        headers={"X-API-Key": "second-key"},
+    )
+    assert response.status_code == 200
+
+
+def test_health_stays_unthrottled(client, real_db_override):
+    app.dependency_overrides[get_db] = real_db_override
+
+    statuses = [client.get("/api/health").status_code for _ in range(35)]
+
+    assert all(s == 200 for s in statuses), "liveness probes must never be throttled"
 
 
 def test_health_endpoint(client, real_db_override):

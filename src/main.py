@@ -2,7 +2,9 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from src.api.routes import router, SchemaCache
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from src.api.routes import router, SchemaCache, limiter
 from src.core.nl_to_sql import NLToSQL
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# slowapi expects the limiter on app state and a handler mapping
+# RateLimitExceeded to a 429 response (REVIEW.md I-04).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(router, prefix="/api")
 

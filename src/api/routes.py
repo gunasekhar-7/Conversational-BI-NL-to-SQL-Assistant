@@ -1,7 +1,10 @@
+import hashlib
 import threading
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 from src.db.session import get_db, engine as default_engine
@@ -14,6 +17,27 @@ from src.api.auth import require_api_key
 router = APIRouter()
 
 SCHEMA_TTL_SECONDS = 60.0
+
+# A leaked API key must not be able to drain the Groq quota until it is
+# noticed (REVIEW.md I-04): the LLM-backed endpoint is throttled per key.
+QUERY_RATE_LIMIT = "30/minute"
+
+
+def rate_limit_key(request: Request) -> str:
+    """Bucket requests by API key when present, else by client address.
+
+    The key is hashed so it never appears in memory dumps or logs as the
+    bucket identifier; unauthenticated callers (rejected later by
+    require_api_key) still share one per-IP bucket.
+    """
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        digest = hashlib.sha256(api_key.encode()).hexdigest()[:32]
+        return f"key:{digest}"
+    return f"ip:{get_remote_address(request)}"
+
+
+limiter = Limiter(key_func=rate_limit_key)
 
 
 class SchemaCache:
@@ -103,18 +127,22 @@ def get_schema(
 
 
 @router.post("/query", response_model=QueryResponse, dependencies=[Depends(require_api_key)])
+@limiter.limit(QUERY_RATE_LIMIT)
 def query_endpoint(
-    request: QueryRequest,
+    payload: QueryRequest,
+    request: Request,
     db: Session = Depends(get_db),
     engine: Engine = Depends(get_engine),
     cache: SchemaCache = Depends(get_schema_cache),
     nl_engine: NLToSQL = Depends(get_nl_to_sql),
 ):
+    # `request` must be named exactly that: slowapi's decorator locates the
+    # starlette Request by parameter name to evaluate the rate limit.
     schema = cache.get(engine)
     schema_desc = format_schema_for_prompt(schema)
 
     try:
-        sql = nl_engine.generate_sql(request.question, schema_desc)
+        sql = nl_engine.generate_sql(payload.question, schema_desc)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -135,9 +163,9 @@ def query_endpoint(
     chart_suggestion = suggest_chart_type(df)
 
     explanation = None
-    if request.explain:
+    if payload.explain:
         try:
-            explanation = nl_engine.explain(request.question, sql, schema_desc)
+            explanation = nl_engine.explain(payload.question, sql, schema_desc)
         except Exception:
             # The explanation is a nicety; a failure here must not fail the query.
             explanation = None
