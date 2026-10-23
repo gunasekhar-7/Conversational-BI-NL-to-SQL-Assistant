@@ -98,7 +98,19 @@ psql nl_to_sql < data/sample_data.sql
 pytest -v
 ```
 
-Expected: ~50 tests passing (validator, NL engine, executor, API integration)
+Expected: 113 passing, 3 skipped. The suite is fully offline: it uses an
+in-memory SQLite database and a mocked LLM (no `.env`, no network needed).
+
+The 3 skipped tests are the real-Postgres tier (`tests/integration/test_postgres.py`),
+which proves the SQLite suite cannot: `statement_timeout` killing a slow query,
+the 1,000-row cap, and catalog introspection. Run them with:
+
+```bash
+docker compose -f docker-compose.test.yml up -d --wait
+TEST_DATABASE_URL=postgresql+psycopg2://nlsql:nlsql@localhost:5433/nlsql_test \
+  pytest tests/integration/test_postgres.py -v
+docker compose -f docker-compose.test.yml down
+```
 
 ### 6. Start Services
 ```bash
