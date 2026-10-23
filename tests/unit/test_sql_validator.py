@@ -126,6 +126,36 @@ def test_blocks_for_update():
     assert not validate_sql(sql)[0]
 
 
+def test_blocks_for_update_with_explicit_reason():
+    """The lock clause must be caught by explicit detection, not by luck
+    (UPDATE happening to be a keyword token) — see REVIEW.md W-04."""
+    is_safe, error = validate_sql("SELECT * FROM customers FOR UPDATE")
+    assert not is_safe
+    assert "lock" in error.lower()
+
+
+def test_blocks_for_share():
+    is_safe, error = validate_sql("SELECT * FROM customers FOR SHARE")
+    assert not is_safe
+    assert "lock" in error.lower()
+
+
+def test_blocks_for_update_of_table():
+    is_safe, error = validate_sql("SELECT * FROM customers FOR UPDATE OF orders")
+    assert not is_safe
+    assert "lock" in error.lower()
+
+
+def test_allows_locking_clause_inside_string_literal():
+    sql = "SELECT * FROM docs WHERE text = 'SELECT FOR UPDATE'"
+    assert validate_sql(sql) == (True, "")
+
+
+def test_allows_column_named_for_update():
+    sql = "SELECT for_update FROM audit"
+    assert validate_sql(sql) == (True, "")
+
+
 def test_allows_trailing_semicolon():
     is_safe, error = validate_sql("SELECT 1;")
     assert is_safe

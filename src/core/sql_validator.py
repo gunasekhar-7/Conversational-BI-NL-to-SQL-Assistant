@@ -23,6 +23,13 @@ BLOCKED_KEYWORDS = {
 
 ALLOWED_LEADING_KEYWORDS = {"SELECT", "WITH"}
 
+# Row-locking clauses are rejected explicitly (REVIEW.md W-04): relying on
+# UPDATE being caught as an incidental keyword made FOR SHARE slip through
+# entirely, and would silently break if sqlparse ever tokenized
+# "FOR UPDATE" as one unit. Cover both tokenizations: a single keyword
+# starting with "FOR " and a FOR keyword followed by the modifier.
+LOCK_CLAUSE_MODIFIERS = ("NO KEY UPDATE", "KEY SHARE", "UPDATE", "SHARE", "EXCLUSIVE")
+
 BLOCKED_IN_COMMENTS = re.compile(
     r"\b(DROP|INSERT|UPDATE|DELETE|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b",
     re.IGNORECASE,
@@ -50,6 +57,23 @@ def keyword_tokens(stmt) -> list[str]:
         for token in stmt.flatten()
         if token.ttype in T.Keyword
     ]
+
+
+def has_locking_clause(keywords: list[str]) -> bool:
+    """True when the statement carries a FOR UPDATE / FOR SHARE lock clause.
+
+    Works on the keyword-token sequence: string literals and identifiers are
+    already excluded by `keyword_tokens`, so `WHERE text = 'FOR UPDATE'` and
+    a column named `for_update` never reach here as FOR/UPDATE pairs.
+    """
+    for i, kw in enumerate(keywords):
+        if kw.startswith("FOR "):
+            if kw[4:] in LOCK_CLAUSE_MODIFIERS:
+                return True
+        elif kw == "FOR":
+            if any(keywords[i + 1 + j] in LOCK_CLAUSE_MODIFIERS for j in range(2) if i + 1 + j < len(keywords)):
+                return True
+    return False
 
 
 def validate_sql(sql: str) -> Tuple[bool, str]:
@@ -89,6 +113,9 @@ def validate_sql(sql: str) -> Tuple[bool, str]:
 
     if not keywords:
         return False, "Cannot parse SQL"
+
+    if has_locking_clause(keywords):
+        return False, "FOR UPDATE / FOR SHARE locking clauses are not allowed"
 
     for keyword in keywords:
         if keyword in BLOCKED_KEYWORDS:
