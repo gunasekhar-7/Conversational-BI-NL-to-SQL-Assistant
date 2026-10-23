@@ -1,7 +1,7 @@
 from langchain_groq import ChatGroq
 from langchain_ollama import OllamaLLM
 from langchain.schema import HumanMessage, SystemMessage
-from src.core.prompts import build_prompt, build_explain_prompt, FEW_SHOT_EXAMPLES
+from src.core.prompts import build_prompt, build_explain_prompt
 from src.config import settings
 from src.core.sql_validator import validate_sql
 import re
@@ -32,19 +32,13 @@ class NLToSQL:
             raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
 
     def generate_sql(self, question: str, schema_description: str) -> str:
-        few_shot = "\n".join(
-            f"Q: {ex['question']}\nSQL: {ex['sql']}" for ex in FEW_SHOT_EXAMPLES
-        )
-
+        # prompts.py owns the whole composition — appending more blocks here
+        # duplicated the question in the final prompt.
         prompt = build_prompt(question, schema_description)
-
-        few_shot_block = f"\n\nExamples:\n{few_shot}\n\nQuestion: {question}\nSQL:"
-
-        full_prompt = prompt + few_shot_block
 
         messages = [
             SystemMessage(content="You are a PostgreSQL expert. Output only SQL, nothing else."),
-            HumanMessage(content=full_prompt),
+            HumanMessage(content=prompt),
         ]
 
         response = self.llm.invoke(messages)

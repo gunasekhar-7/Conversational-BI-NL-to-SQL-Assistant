@@ -59,6 +59,23 @@ def test_rejects_unsafe_llm_output():
         engine.generate_sql("test", "schema")
 
 
+def test_final_prompt_has_question_once_with_examples():
+    """Composition belongs to prompts.py; generate_sql must not re-append
+    the question (REVIEW.md I-01)."""
+    question = "Which carrier shipped fastest in March?"
+    mock_response = MagicMock()
+    mock_response.content = "SELECT 1"
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = mock_response
+
+    engine = NLToSQL(llm=mock_llm)
+    engine.generate_sql(question, "Table: orders (id, carrier_id, delivered_at)")
+
+    prompt_sent = mock_llm.invoke.call_args[0][0][1].content
+    assert prompt_sent.count(question) == 1
+    assert "Examples:" in prompt_sent
+
+
 def test_removes_trailing_semicolon():
     mock_response = MagicMock()
     mock_response.content = "SELECT 1;"

@@ -12,6 +12,9 @@ Rules:
 - Write clear, readable SQL with proper indentation.
 - Return ONLY the SQL query, no explanation, no markdown code blocks.
 
+Examples:
+{few_shot}
+
 Question: {question}
 
 SQL Query:"""
@@ -53,8 +56,18 @@ Do not rewrite or improve the query. Do not use markdown."""
 
 
 def build_prompt(question: str, schema_description: str) -> str:
+    """Compose the full SQL-generation prompt.
+
+    All pieces — schema, rules, few-shot examples, question, generation cue —
+    are assembled here so the template owns their order (REVIEW.md I-01) and
+    the question appears exactly once, last, right before the cue.
+    """
+    few_shot = "\n\n".join(
+        f"Question: {ex['question']}\nSQL: {ex['sql']}" for ex in FEW_SHOT_EXAMPLES
+    )
     return SCHEMA_AWARE_PROMPT.format(
         schema_description=schema_description,
+        few_shot=few_shot,
         question=question,
     )
 
