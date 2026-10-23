@@ -1,4 +1,3 @@
-import pytest
 from src.core.sql_validator import validate_sql
 
 

@@ -1,5 +1,4 @@
-from sqlalchemy import inspect, MetaData
-from sqlalchemy.orm import Session
+from sqlalchemy import inspect
 
 
 def inspect_schema(engine) -> dict:

@@ -1,4 +1,4 @@
-from src.evaluation.evaluator import EvalResult, Evaluator
+from src.evaluation.evaluator import EvalResult
 import json
 from datetime import datetime
 
@@ -9,16 +9,16 @@ def print_report(metrics: dict, results: list[EvalResult]):
     print("=" * 70)
     print(f"\nRun Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Total Questions: {metrics['total']}")
-    print(f"\n📈 Overall Metrics:")
+    print("\n📈 Overall Metrics:")
     print(f"  SQL Generation Accuracy:  {metrics['sql_generation_accuracy']:.1%}")
     print(f"  Execution Success Rate:   {metrics['execution_success_rate']:.1%}")
     print(f"  Execution Accuracy:       {metrics['execution_accuracy']:.1%}")
 
-    print(f"\n📋 By Category:")
+    print("\n📋 By Category:")
     for cat, data in metrics.get("by_category", {}).items():
         print(f"  {cat:20s} {data['correct']}/{data['total']} ({data['accuracy']:.1%})")
 
-    print(f"\n🔍 Detailed Failures:")
+    print("\n🔍 Detailed Failures:")
     for r in results:
         if not r.correct:
             print(f"\n  ✗ Q{r.item.id} [{r.item.category}]: {r.item.question}")
