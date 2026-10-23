@@ -1,9 +1,15 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, StringConstraints
+from typing import Annotated, Optional
 
 
 class QueryRequest(BaseModel):
-    question: str
+    # Bound the prompt payload: an unbounded string is a token-cost lever and
+    # a prompt-injection surface. Whitespace-only questions are rejected, and
+    # padding is stripped before validation so " q " counts as "q".
+    question: Annotated[
+        str,
+        StringConstraints(min_length=1, max_length=2000, strip_whitespace=True),
+    ]
     explain: bool = False
 
 

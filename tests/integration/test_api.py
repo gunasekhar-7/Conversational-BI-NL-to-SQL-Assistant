@@ -100,6 +100,37 @@ def test_schema_requires_api_key(client):
     assert client.get("/api/schema").status_code == 401
 
 
+def test_query_rejects_empty_question(client):
+    response = client.post(
+        "/api/query", json={"question": "   "}, headers=HEADERS
+    )
+
+    assert response.status_code == 422
+
+
+def test_query_rejects_overlong_question(client):
+    response = client.post(
+        "/api/query", json={"question": "x" * 2001}, headers=HEADERS
+    )
+
+    assert response.status_code == 422
+
+
+def test_query_strips_question_whitespace(client):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
+
+    response = client.post(
+        "/api/query", json={"question": "  how many customers?  "}, headers=HEADERS
+    )
+
+    assert response.status_code == 200
+    asked_question = mock_engine.generate_sql.call_args[0][0]
+    assert asked_question == "how many customers?"
+
+
 def test_query_endpoint_success(client):
     mock_engine = MagicMock()
     mock_engine.generate_sql.return_value = "SELECT 1 as test"
