@@ -36,8 +36,12 @@ with st.sidebar:
     st.checkbox("Explain the SQL", value=False, key="explain_sql",
                 help="Ask the model for a one-line plain-English summary of the generated query.")
     if st.button("🔄 Load Schema"):
-        schema = call_schema_api()
+        schema, schema_error = call_schema_api()
         st.session_state.schema = schema
+        if schema_error:
+            st.error(schema_error)
+        elif not schema:
+            st.info("The API responded, but the database has no tables to show.")
 
     if "schema" in st.session_state:
         render_schema_viewer(st.session_state.schema)

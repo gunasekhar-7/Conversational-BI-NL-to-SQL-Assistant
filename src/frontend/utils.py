@@ -55,10 +55,33 @@ def call_query_api(question: str, explain: bool = False) -> dict:
     return response.json()
 
 
-def call_schema_api() -> dict:
+def call_schema_api() -> tuple[dict, str | None]:
+    """Return (schema, error).
+
+    An empty dict alone is ambiguous — the database may genuinely have no
+    tables, or the API may be down — so failures come back as an actionable
+    message instead of being swallowed (REVIEW.md W-05).
+    """
     try:
         response = httpx.get(f"{API_BASE}/schema", headers=_headers(), timeout=10.0)
         response.raise_for_status()
-        return response.json().get("schema", {})
-    except Exception:
-        return {}
+    except httpx.ConnectError:
+        return {}, (
+            f"Could not load schema: can't reach the API at {API_BASE}. "
+            "Start it with `uvicorn src.main:app`."
+        )
+    except httpx.TimeoutException:
+        return {}, "Could not load schema: the API did not answer in time."
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 401:
+            return {}, (
+                "Could not load schema: the API rejected this request's key "
+                "(HTTP 401). Set API_KEY to the same value the API uses, then "
+                "restart Streamlit."
+            )
+        return {}, f"Could not load schema: the API returned {status}."
+    except Exception as e:
+        return {}, f"Could not load schema: {e}"
+
+    return response.json().get("schema", {}), None
