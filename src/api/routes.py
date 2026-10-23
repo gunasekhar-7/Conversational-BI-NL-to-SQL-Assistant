@@ -14,6 +14,11 @@ from src.db.schema_inspector import inspect_schema, format_schema_for_prompt
 from src.core.nl_to_sql import NLToSQL
 from src.core.query_executor import execute_query, suggest_chart_type, dataframe_to_records
 from src.config import settings
+from src.api.metrics import (
+    QUERY_FAILURES,
+    SQL_GENERATION_FAILURES,
+    metrics_response,
+)
 from src.api.schemas import QueryRequest, QueryResponse, SchemaResponse, HealthResponse
 from src.api.auth import is_valid_api_key, require_api_key
 
@@ -153,6 +158,15 @@ def health_check(db: Session = Depends(get_db)):
     )
 
 
+@router.get("/metrics")
+def metrics_endpoint():
+    """Prometheus scrape endpoint. Unauthenticated and unthrottled like
+    /health: metrics scrapes are probes and must never be blocked or slowed
+    by the query budget. Labels carry route templates only — no user text.
+    """
+    return metrics_response()
+
+
 @router.get("/schema", response_model=SchemaResponse, dependencies=[Depends(require_api_key)])
 def get_schema(
     engine: Engine = Depends(get_engine),
@@ -183,13 +197,16 @@ def query_endpoint(
     try:
         sql = nl_engine.generate_sql(payload.question, schema_desc)
     except ValueError as e:
+        SQL_GENERATION_FAILURES.inc()
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        SQL_GENERATION_FAILURES.inc()
         raise HTTPException(status_code=500, detail=f"SQL generation failed: {str(e)}")
 
     df, error = execute_query(sql, db)
 
     if error:
+        QUERY_FAILURES.inc()
         return QueryResponse(
             sql=sql,
             results=[],

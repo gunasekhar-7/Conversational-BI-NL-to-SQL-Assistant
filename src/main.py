@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from src.api.metrics import observe_request
 from src.api.routes import router, SchemaCache, limiter
 from src.core.nl_to_sql import NLToSQL
 
@@ -25,10 +26,16 @@ async def request_logging_middleware(request: Request, call_next):
     request.state.request_id = request_id
     start = time.perf_counter()
 
+    # Metrics label is the route *template* when routing matched, else
+    # "unmatched": raw paths would let a client mint unlimited label series.
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or "unmatched"
+
     try:
         response = await call_next(request)
     except Exception:
         duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        observe_request(request.method, route_path, 500, duration_ms / 1000)
         logger.exception(
             json.dumps({
                 "event": "http_request",
@@ -42,6 +49,7 @@ async def request_logging_middleware(request: Request, call_next):
         raise
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    observe_request(request.method, route_path, response.status_code, duration_ms / 1000)
     response.headers["X-Request-ID"] = request_id
     logger.info(
         json.dumps({
