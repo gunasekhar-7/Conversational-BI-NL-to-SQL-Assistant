@@ -1,3 +1,11 @@
+__all__ = (
+    "SCHEMA_AWARE_PROMPT",
+    "FEW_SHOT_EXAMPLES",
+    "EXPLAIN_PROMPT",
+    "build_prompt",
+    "build_explain_prompt",
+)
+
 SCHEMA_AWARE_PROMPT = """You are an expert SQL query writer for PostgreSQL.
 
 Database Schema:

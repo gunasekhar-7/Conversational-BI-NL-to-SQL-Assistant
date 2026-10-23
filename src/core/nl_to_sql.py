@@ -6,6 +6,8 @@ from src.config import settings
 from src.core.sql_validator import validate_sql
 import re
 
+__all__ = ("NLToSQL",)
+
 
 class NLToSQL:
     def __init__(self, llm=None):

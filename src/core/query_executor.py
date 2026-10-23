@@ -10,6 +10,14 @@ from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
+__all__ = (
+    "EXECUTION_ERROR",
+    "bounded_query",
+    "dataframe_to_records",
+    "execute_query",
+    "suggest_chart_type",
+)
+
 MAX_ROWS = 1000
 
 EXECUTION_ERROR = "Query execution failed. See the server log for details."

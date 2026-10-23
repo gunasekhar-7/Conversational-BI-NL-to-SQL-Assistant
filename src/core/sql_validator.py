@@ -3,6 +3,7 @@ import sqlparse
 from sqlparse import tokens as T
 from typing import Tuple
 
+__all__ = ("validate_sql",)
 
 BLOCKED_KEYWORDS = {
     "INSERT",
