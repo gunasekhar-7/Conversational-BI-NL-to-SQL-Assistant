@@ -1,6 +1,8 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from src.core.nl_to_sql import NLToSQL
 from src.core.query_executor import execute_query
 from src.db.schema_inspector import inspect_schema, format_schema_for_prompt
@@ -121,11 +123,59 @@ class Evaluator:
 
         return True
 
-    def evaluate_all(self) -> dict:
-        items = self.load_questions()
-        self.results = [self.evaluate_question(item) for item in items]
+    def evaluate_all(
+        self,
+        max_workers: int = 4,
+        item_timeout: float = 60.0,
+        on_progress: Optional[Callable[[int, int, EvalResult], None]] = None,
+    ) -> dict:
+        """Evaluate every question concurrently.
 
+        One slow LLM call must not serialize the whole run (REVIEW.md W-03):
+        questions are submitted to a small pool — sized to leave headroom
+        under LLM rate limits — and each is awaited with its own timeout so a
+        hung call is recorded as an error instead of blocking forever.
+        Results keep question order regardless of completion order.
+
+        `on_progress(done, total, result)` fires as each question settles.
+        """
+        items = self.load_questions()
+        total = len(items)
+        results: list[Optional[EvalResult]] = [None] * total
+        report = on_progress if on_progress is not None else self._print_progress
+
+        if not items:
+            self.results = []
+            return self.compute_metrics()
+
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            futures = [executor.submit(self.evaluate_question, item) for item in items]
+            done = 0
+            for item, future in zip(items, futures):
+                try:
+                    result = future.result(timeout=item_timeout)
+                except FuturesTimeoutError:
+                    future.cancel()
+                    result = EvalResult(
+                        item, "", False, False, False,
+                        error=f"Timed out after {item_timeout}s waiting for evaluation",
+                    )
+                results[done] = result
+                done += 1
+                report(done, total, result)
+        finally:
+            # Never wait on stragglers: every item already has a recorded
+            # result, and blocking here would undo the timeout's purpose.
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        self.results = [r for r in results if r is not None]
         return self.compute_metrics()
+
+    @staticmethod
+    def _print_progress(done: int, total: int, result: EvalResult) -> None:
+        mark = "ok" if result.correct else "FAIL"
+        print(f"[{done}/{total}] Q{result.item.id} {mark}", flush=True)
 
     def compute_metrics(self) -> dict:
         total = len(self.results)
