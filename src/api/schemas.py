@@ -30,3 +30,6 @@ class SchemaResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     database: str
+    # "ready" | "unavailable": lets an orchestrator tell "DB down" apart
+    # from "LLM key missing" without reading logs.
+    llm: str

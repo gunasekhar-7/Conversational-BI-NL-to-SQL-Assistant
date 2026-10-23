@@ -145,16 +145,19 @@ def get_nl_to_sql(request: Request) -> NLToSQL:
 
 
 @router.get("/health", response_model=HealthResponse)
-def health_check(db: Session = Depends(get_db)):
+def health_check(request: Request, db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception:
         db_status = "disconnected"
 
+    llm_status = "ready" if getattr(request.app.state, "nl_engine", None) is not None else "unavailable"
+
     return HealthResponse(
         status="ok",
         database=db_status,
+        llm=llm_status,
     )
 
 

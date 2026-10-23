@@ -178,6 +178,23 @@ def test_health_endpoint(client, real_db_override):
     assert data["database"] == "connected"
 
 
+def test_health_reports_llm_ready(client, real_db_override):
+    app.dependency_overrides[get_db] = real_db_override
+
+    data = client.get("/api/health").json()
+
+    assert data["llm"] == "ready"
+
+
+def test_health_reports_llm_unavailable_when_not_initialized(client, real_db_override):
+    app.dependency_overrides[get_db] = real_db_override
+    client.app.state.nl_engine = None
+
+    data = client.get("/api/health").json()
+
+    assert data["llm"] == "unavailable"
+
+
 def test_health_endpoint_reports_disconnected_on_error(client):
     broken_db = MagicMock()
     broken_db.execute.side_effect = RuntimeError("connection refused")
