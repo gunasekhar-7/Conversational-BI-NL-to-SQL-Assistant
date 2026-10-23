@@ -1,0 +1,58 @@
+# Full local stack: API + Postgres + Redis.
+#
+#   cp .env.example .env       # fill in API_KEY (+ GROQ_API_KEY or Ollama)
+#   docker compose up --build
+#
+# Host psql can load the sample schema/data on the published port:
+#   psql "postgresql://nlsql:nlsql@localhost:5432/nl_to_sql" < data/sample_schema.sql
+#   psql "postgresql://nlsql:nlsql@localhost:5432/nl_to_sql" < data/sample_data.sql
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      # Optional so `docker compose config` works in a bare checkout; the
+      # README's `cp .env.example .env` step supplies real values.
+      - path: .env
+        required: false
+    environment:
+      # Service names, not localhost: inside the compose network the
+      # databases are addressed by service hostname. These override the
+      # .env values, which stay useful for bare-uvicorn local runs.
+      DATABASE_URL: postgresql+psycopg2://nlsql:nlsql@postgres:5432/nl_to_sql
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nlsql
+      POSTGRES_PASSWORD: nlsql
+      POSTGRES_DB: nl_to_sql
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nlsql"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

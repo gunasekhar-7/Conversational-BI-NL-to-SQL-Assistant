@@ -253,18 +253,50 @@ streamlit run src/frontend/app.py
 ```
 
 ### Production
-A basic Dockerfile skeleton:
 
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+A multi-stage `Dockerfile` builds a non-root image (builder installs the
+pinned dependency set; the runtime stage contains only interpreter + deps +
+`src/`), with a healthcheck against `/api/health`:
+
+```bash
+docker build -t nl-to-sql .
+docker run -p 8000:8000 --env-file .env nl-to-sql
 ```
+
+Or run the full stack (API + Postgres + Redis) with compose:
+
+```bash
+cp .env.example .env       # set API_KEY and GROQ_API_KEY (or Ollama settings)
+docker compose up --build
+# load sample data through the published port:
+psql "postgresql://nlsql:nlsql@localhost:5432/nl_to_sql" < data/sample_schema.sql
+psql "postgresql://nlsql:nlsql@localhost:5432/nl_to_sql" < data/sample_data.sql
+```
+
+#### Environment variables
+
+| Variable | Required | Default | Notes |
+|----------|----------|---------|-------|
+| `DATABASE_URL` | yes | — | SQLAlchemy URL; `postgresql://` enables statement timeout |
+| `API_KEY` | yes | — | primary `X-API-Key` value |
+| `GROQ_API_KEY` | for Groq | — | missing → `/query` degrades to 503, health/schema stay up |
+| `LLM_PROVIDER` | no | `groq` | `groq` or `ollama` |
+| `LLM_MODEL` | no | `llama-3.1-70b-versatile` | |
+| `OLLAMA_BASE_URL` | no | `http://localhost:11434` | provider `ollama` |
+| `OLLAMA_MODEL` | no | `llama3.1` | provider `ollama` |
+| `STATEMENT_TIMEOUT_MS` | no | `15000` | applied per transaction via `SET LOCAL` and at connect time |
+| `API_KEYS` | no | — | comma-separated extra keys; each gets its own rate-limit bucket |
+| `QUERY_RATE_LIMIT` | no | `30/minute` | slowapi limit string for `POST /query`, per valid key |
+| `REDIS_URL` | no | — | shared rate-limit buckets across workers; falls back to in-memory if unreachable at startup |
+
+#### Scaling workers
+
+`uvicorn src.main:app --workers N` is supported. Two per-process behaviors
+to know: rate-limit buckets span workers only when `REDIS_URL` points at a
+reachable Redis (otherwise each worker enforces its own bucket), and the
+introspected-schema cache is per process with up to 60s staleness after a
+schema migration. Metrics at `/api/metrics` are also per process — scrape
+each worker or aggregate at the collector.
 
 ## Performance & Safety
 

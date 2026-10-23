@@ -1,0 +1,20 @@
+# Build context hygiene: the image copies requirements.txt and src/ only;
+# everything else here would just bust the layer cache or leak into context.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+docs
+.superpowers
+data
+*.md
+docker-compose*.yml
+Dockerfile
