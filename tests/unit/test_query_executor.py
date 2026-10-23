@@ -4,9 +4,37 @@ from unittest.mock import MagicMock, Mock
 from src.core.query_executor import (
     EXECUTION_ERROR,
     bounded_query,
+    dataframe_to_records,
     execute_query,
     suggest_chart_type,
 )
+
+
+def test_dataframe_to_records_sanitizes_nan_and_inf():
+    """NaN/Inf are not valid JSON; strict serializers reject them at send time."""
+    import json
+    import math
+
+    df = pd.DataFrame(
+        {
+            "a": [1.0, float("nan"), float("inf")],
+            "b": [float("-inf"), None, 2.5],
+        }
+    )
+
+    records = dataframe_to_records(df)
+
+    # allow_nan=False mirrors what the ASGI JSON layer enforces: a raw
+    # Infinity or NaN in the payload is invalid JSON and would 500 the request.
+    json.dumps(records, allow_nan=False)
+
+    assert records[0] == {"a": 1.0, "b": None}
+    assert records[1]["a"] is None
+    assert records[2]["a"] is None
+    for row in records:
+        for value in row.values():
+            if isinstance(value, float):
+                assert math.isfinite(value)
 
 
 def test_blocks_unsafe_sql():

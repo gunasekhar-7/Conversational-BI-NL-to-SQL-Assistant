@@ -1,4 +1,5 @@
 import logging
+import math
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -43,8 +44,21 @@ def execute_query(sql: str, db: Session) -> Tuple[pd.DataFrame, str]:
         return pd.DataFrame(), EXECUTION_ERROR
 
 
+def _json_finite(value):
+    """Map non-finite floats to None so the payload is strict-JSON safe."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
 def dataframe_to_records(df: pd.DataFrame) -> list[dict]:
-    return df.to_dict(orient="records")
+    """Serialize a frame to JSON-safe records.
+
+    SQL NULLs become NaN in pandas and infinities can arrive from aggregates
+    like 1/0; neither survives strict JSON encoding, so they become null.
+    """
+    records = df.astype(object).where(df.notnull(), None).to_dict(orient="records")
+    return [{k: _json_finite(v) for k, v in row.items()} for row in records]
 
 
 def suggest_chart_type(df: pd.DataFrame) -> str | None:
