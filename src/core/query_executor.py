@@ -79,10 +79,12 @@ def suggest_chart_type(df: pd.DataFrame) -> str | None:
     Contract:
       - no chart for an empty frame, fewer than two columns, or a frame with
         no numeric column (there is nothing to plot);
-      - `line` once there are more than 20 rows, where a series reads better
-        than bars;
+      - `line` when any column is datetime — a time series reads as a
+        continuous line no matter how short or long it is (REVIEW.md I-03:
+        row count alone must not imply continuity);
       - `scatter` when two numeric columns can be plotted against each other;
-      - `bar` otherwise, with the categorical column as the axis.
+      - `bar` otherwise, with the categorical column as the axis — including
+        high-row-count categorical results, which are categories, not series.
 
     Pie is never suggested automatically: a categorical total renders as a pie
     only when the user asks for it, so the frontend keeps it as an explicit
@@ -96,7 +98,7 @@ def suggest_chart_type(df: pd.DataFrame) -> str | None:
     if not numeric_cols:
         return None
 
-    if len(df) > 20:
+    if len(df.select_dtypes(include=["datetime", "datetimetz"]).columns) > 0:
         return "line"
 
     if len(numeric_cols) >= 2:

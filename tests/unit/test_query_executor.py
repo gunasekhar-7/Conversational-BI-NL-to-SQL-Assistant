@@ -145,12 +145,24 @@ def test_suggest_chart_bar():
     assert suggest_chart_type(df) == 'bar'
 
 
-def test_suggest_chart_line_when_many_rows():
+def test_suggest_chart_line_when_datetime_column():
+    # Small on purpose: a short time series must still read as a line even
+    # though it is under any row-count threshold.
     df = pd.DataFrame({
-        'date': list(range(25)),
-        'value': list(range(25))
+        "day": pd.date_range("2026-01-01", periods=10),
+        "revenue": range(10),
     })
-    assert suggest_chart_type(df) == 'line'
+    assert suggest_chart_type(df) == "line"
+
+
+def test_categorical_majority_rows_stay_bar():
+    # 25 rows of names+values is categorical, not a series: a line chart
+    # would imply continuity the data does not have (REVIEW.md I-03).
+    df = pd.DataFrame({
+        'city': [f"c{i}" for i in range(25)],
+        'orders': list(range(25))
+    })
+    assert suggest_chart_type(df) == 'bar'
 
 
 def test_small_categorical_defaults_to_bar():
