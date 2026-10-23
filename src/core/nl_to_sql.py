@@ -1,5 +1,5 @@
 from langchain_groq import ChatGroq
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from langchain.schema import HumanMessage, SystemMessage
 from src.core.prompts import build_prompt, build_explain_prompt, FEW_SHOT_EXAMPLES
 from src.config import settings
@@ -24,7 +24,7 @@ class NLToSQL:
                 temperature=0,
             )
         elif settings.llm_provider == "ollama":
-            self.llm = Ollama(
+            self.llm = OllamaLLM(
                 model=settings.ollama_model,
                 base_url=settings.ollama_base_url,
             )
