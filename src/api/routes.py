@@ -11,27 +11,26 @@ from src.db.session import get_db, engine as default_engine
 from src.db.schema_inspector import inspect_schema, format_schema_for_prompt
 from src.core.nl_to_sql import NLToSQL
 from src.core.query_executor import execute_query, suggest_chart_type, dataframe_to_records
+from src.config import settings
 from src.api.schemas import QueryRequest, QueryResponse, SchemaResponse, HealthResponse
-from src.api.auth import require_api_key
+from src.api.auth import is_valid_api_key, require_api_key
 
 router = APIRouter()
 
 SCHEMA_TTL_SECONDS = 60.0
 
-# A leaked API key must not be able to drain the Groq quota until it is
-# noticed (REVIEW.md I-04): the LLM-backed endpoint is throttled per key.
-QUERY_RATE_LIMIT = "30/minute"
-
 
 def rate_limit_key(request: Request) -> str:
-    """Bucket requests by API key when present, else by client address.
+    """Bucket requests by API key when valid, else by client address.
 
     The key is hashed so it never appears in memory dumps or logs as the
-    bucket identifier; unauthenticated callers (rejected later by
-    require_api_key) still share one per-IP bucket.
+    bucket identifier. Only *valid* keys get their own bucket: an attacker
+    cycling forged keys would otherwise mint one bucket per guess (unbounded
+    memory); forged and anonymous callers share one per-IP bucket and are
+    rejected later by require_api_key anyway.
     """
     api_key = request.headers.get("X-API-Key")
-    if api_key:
+    if api_key and is_valid_api_key(api_key):
         digest = hashlib.sha256(api_key.encode()).hexdigest()[:32]
         return f"key:{digest}"
     return f"ip:{get_remote_address(request)}"
@@ -127,7 +126,10 @@ def get_schema(
 
 
 @router.post("/query", response_model=QueryResponse, dependencies=[Depends(require_api_key)])
-@limiter.limit(QUERY_RATE_LIMIT)
+# A leaked API key must not be able to drain the Groq quota until it is
+# noticed (REVIEW.md I-04): the LLM-backed endpoint is throttled per valid
+# key, tunable via QUERY_RATE_LIMIT (read at process start).
+@limiter.limit(settings.query_rate_limit)
 def query_endpoint(
     payload: QueryRequest,
     request: Request,

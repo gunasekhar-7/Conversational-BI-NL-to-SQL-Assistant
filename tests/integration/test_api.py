@@ -195,6 +195,23 @@ def test_health_stays_public_without_api_key(client, real_db_override):
     assert client.get("/api/health").status_code == 200
 
 
+def test_extra_api_keys_from_settings_are_accepted(client, monkeypatch):
+    mock_engine = MagicMock()
+    mock_engine.generate_sql.return_value = "SELECT 1 as test"
+    app.dependency_overrides[get_nl_to_sql] = lambda: mock_engine
+    app.dependency_overrides[get_db] = lambda: make_mock_db([(1,)], ["test"])
+
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "api_keys", "alpha")
+    response = client.post(
+        "/api/query",
+        json={"question": "test"},
+        headers={"X-API-Key": "alpha"},
+    )
+    assert response.status_code == 200
+
+
 def test_query_requires_api_key(client):
     response = client.post("/api/query", json={"question": "how many customers?"})
 
