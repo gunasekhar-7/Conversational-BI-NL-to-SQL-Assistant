@@ -98,7 +98,7 @@ psql nl_to_sql < data/sample_data.sql
 pytest -v
 ```
 
-Expected: 113 passing, 3 skipped. The suite is fully offline: it uses an
+Expected: 115 passing, 3 skipped. The suite is fully offline: it uses an
 in-memory SQLite database and a mocked LLM (no `.env`, no network needed).
 
 The 3 skipped tests are the real-Postgres tier (`tests/integration/test_postgres.py`),
@@ -297,6 +297,24 @@ reachable Redis (otherwise each worker enforces its own bucket), and the
 introspected-schema cache is per process with up to 60s staleness after a
 schema migration. Metrics at `/api/metrics` are also per process — scrape
 each worker or aggregate at the collector.
+
+#### Production-readiness re-score (2026-10-23 pass)
+
+The four caps the original REVIEW.md rating (8.2 → 8.7 after the hardening
+pass) held on to, with the evidence closing each:
+
+| Cap | Closed by | Evidence |
+|-----|-----------|----------|
+| One shared key, one team-wide 30/min bucket | `API_KEYS` + per-valid-key buckets (forged keys bucket by IP) | `tests/unit/test_auth.py`, `test_api.py::test_extra_api_keys_from_settings_are_accepted` |
+| All DB tests on SQLite; Postgres behavior unproven | env-gated real-Postgres tier | `tests/integration/test_postgres.py` — 3/3 pass against Postgres 16: `pg_sleep(10)` killed at a 200ms `SET LOCAL` cap, row cap 1000, catalog introspection |
+| Per-process state degrades under multiple workers | Redis-shared rate-limit buckets with in-memory fallback; schema cache documented as per-process ≤60s | `tests/unit/test_limiter_storage.py`, compose wires `REDIS_URL` |
+| No metrics; latency unanswerable | `/api/metrics`: request count/latency histogram + SQL-generation and query-failure counters, route-template labels only | `tests/integration/test_metrics.py` |
+
+Also closed from the review's remaining findings: W-06 (`SET LOCAL` per
+transaction, dialect-gated), I-03 (chart type follows column semantics),
+I-07 (`__all__` + `py.typed`). Tooling added: ruff gate, multi-stage
+Docker image + compose stack, four-job CI (lint / offline suite /
+Postgres tier / image build).
 
 ## Performance & Safety
 
