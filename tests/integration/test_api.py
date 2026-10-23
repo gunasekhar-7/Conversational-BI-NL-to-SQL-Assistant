@@ -16,8 +16,10 @@ HEADERS = {"X-API-Key": "test-key"}
 
 @pytest.fixture
 def client():
-    test_client = TestClient(app)
-    yield test_client
+    # Context manager runs the lifespan handler, so app.state.nl_engine and
+    # app.state.schema_cache are initialized exactly as they are under uvicorn.
+    with TestClient(app) as test_client:
+        yield test_client
     app.dependency_overrides.clear()
 
 
@@ -48,6 +50,55 @@ def make_mock_db(rows, columns):
     result.keys.return_value = columns
     db.execute.return_value = result
     return db
+
+
+def test_nl_engine_initialized_at_startup(client):
+    from src.core.nl_to_sql import NLToSQL
+
+    assert isinstance(client.app.state.nl_engine, NLToSQL)
+
+
+def test_get_nl_to_sql_reads_app_state():
+    from starlette.requests import Request
+    from src.api.routes import get_nl_to_sql
+
+    sentinel = object()
+    app.state.nl_engine = sentinel
+    scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"", "app": app}
+
+    assert get_nl_to_sql(Request(scope)) is sentinel
+
+
+def test_schema_inspected_once_within_ttl(client, monkeypatch):
+    calls = []
+
+    def fake_inspect(engine):
+        calls.append(engine)
+        return {"customers": {"columns": [{"name": "id", "type": "INTEGER"}], "primary_key": ["id"], "foreign_keys": []}}
+
+    monkeypatch.setattr("src.api.routes.inspect_schema", fake_inspect)
+
+    first = client.get("/api/schema", headers=HEADERS)
+    second = client.get("/api/schema", headers=HEADERS)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert len(calls) == 1, "schema must be inspected once per TTL window"
+
+
+def test_engine_flows_through_dependency_injection(client, monkeypatch):
+    from src.api.routes import get_engine
+
+    fake_engine = MagicMock(name="engine")
+    captured = []
+    monkeypatch.setattr("src.api.routes.inspect_schema", lambda e: captured.append(e) or {})
+    app.dependency_overrides[get_engine] = lambda: fake_engine
+
+    response = client.get("/api/schema", headers=HEADERS)
+
+    assert response.status_code == 200
+    assert captured and captured[0] is fake_engine
 
 
 def test_health_endpoint(client, real_db_override):
