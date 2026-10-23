@@ -1,6 +1,8 @@
 import hashlib
+import logging
 import threading
 import time
+from typing import Callable, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
@@ -36,7 +38,42 @@ def rate_limit_key(request: Request) -> str:
     return f"ip:{get_remote_address(request)}"
 
 
-limiter = Limiter(key_func=rate_limit_key)
+logger = logging.getLogger(__name__)
+
+
+def _redis_reachable(redis_url: str) -> bool:
+    """Ping Redis with a 1s connect timeout so startup never hangs."""
+    import redis  # lazy: only needed when REDIS_URL is actually configured
+
+    try:
+        client = redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1)
+        try:
+            return bool(client.ping())
+        finally:
+            client.close()
+    except Exception as e:
+        logger.warning("Redis unreachable at startup (%s); falling back to in-memory rate limiting", e)
+        return False
+
+
+def build_storage_uri(
+    redis_url: Optional[str], ping: Optional[Callable[[str], bool]] = None
+) -> str:
+    """Choose the slowapi storage: shared Redis when configured and reachable,
+    per-process memory otherwise.
+
+    Sharing buckets requires Redis; an unreachable Redis must not take the
+    API down (Review Focus), so a failed ping degrades to memory:// with a
+    warning rather than 500ing every request.
+    """
+    if not redis_url:
+        return "memory://"
+    if (ping or _redis_reachable)(redis_url):
+        return redis_url
+    return "memory://"
+
+
+limiter = Limiter(key_func=rate_limit_key, storage_uri=build_storage_uri(settings.redis_url))
 
 
 class SchemaCache:

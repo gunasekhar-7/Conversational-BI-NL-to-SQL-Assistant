@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     api_keys: str = ""
     # slowapi limit string for POST /query; read at process start.
     query_rate_limit: str = "30/minute"
+    # Optional shared rate-limit storage. Set to a redis:// URL to make
+    # buckets span multiple uvicorn workers; unset/empty keeps per-process
+    # memory buckets (fine for a single worker).
+    redis_url: str | None = None
 
     class Config:
         env_file = ".env"
