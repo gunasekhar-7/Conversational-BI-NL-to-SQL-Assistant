@@ -1,6 +1,7 @@
 import pandas as pd
 from unittest.mock import MagicMock, Mock
 
+from src.config import settings
 from src.core.query_executor import (
     EXECUTION_ERROR,
     bounded_query,
@@ -58,6 +59,35 @@ def test_valid_select_returns_dataframe():
     assert error == ""
     assert len(df) == 1
     mock_db.execute.assert_called_once()
+
+
+def test_sets_local_timeout_on_postgres_before_query():
+    mock_db = MagicMock()
+    mock_db.bind.dialect.name = "postgresql"
+    mock_result = Mock()
+    mock_result.fetchall.return_value = [(1,)]
+    mock_result.keys.return_value = ["n"]
+    mock_db.execute.return_value = mock_result
+
+    df, error = execute_query("SELECT 1 AS n", mock_db)
+
+    assert error == ""
+    first_stmt = str(mock_db.execute.call_args_list[0].args[0])
+    assert first_stmt.startswith("SET LOCAL statement_timeout")
+    assert str(settings.statement_timeout_ms) in first_stmt
+    assert "_capped" in str(mock_db.execute.call_args_list[1].args[0])
+
+
+def test_skips_set_local_on_non_postgres_dialect():
+    mock_db = MagicMock()  # bare MagicMock: dialect.name is never the string "postgresql"
+    mock_db.execute.return_value = Mock(
+        **{"fetchall.return_value": [], "keys.return_value": []}
+    )
+
+    df, error = execute_query("SELECT 1 AS n", mock_db)
+
+    assert error == ""
+    mock_db.execute.assert_called_once()  # exactly one statement, no SET LOCAL
 
 
 def test_execution_error_returns_empty():

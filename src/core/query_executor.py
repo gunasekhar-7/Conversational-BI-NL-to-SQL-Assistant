@@ -3,6 +3,7 @@ import math
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from src.config import settings
 from src.core.sql_validator import validate_sql
 from typing import Tuple
 
@@ -31,6 +32,17 @@ def execute_query(sql: str, db: Session) -> Tuple[pd.DataFrame, str]:
         return pd.DataFrame(), error
 
     try:
+        # W-06: connect_args sets statement_timeout at connection-open, but a
+        # pooled connection's GUC can be changed mid-session by anything else
+        # holding it. Re-assert the cap inside this transaction so it is in
+        # force for exactly this query, and expires on commit/rollback.
+        # SET LOCAL is Postgres-only; other dialects get the connect-args
+        # behavior (or none) and must never see this statement.
+        if db.bind.dialect.name == "postgresql":
+            db.execute(
+                text(f"SET LOCAL statement_timeout = {int(settings.statement_timeout_ms)}")
+            )
+
         result = db.execute(text(bounded_query(sql)))
         rows = result.fetchall()
         columns = result.keys()
