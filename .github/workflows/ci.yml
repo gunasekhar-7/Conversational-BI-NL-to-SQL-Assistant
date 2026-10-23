@@ -1,0 +1,65 @@
+# Four gates, mirroring what a release needs: lint, the offline suite, the
+# real-Postgres tier, and a container build. The postgres job relies on
+# pytest exiting 5 when zero tests are selected, so a silently-skipped tier
+# fails the pipeline instead of passing green (plan Review Focus #5).
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.16.10
+      - run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/unit tests/integration --ignore=tests/integration/test_postgres.py -q
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nlsql
+          POSTGRES_PASSWORD: nlsql
+          POSTGRES_DB: nlsql_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nlsql"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest -m postgres -v
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://nlsql:nlsql@localhost:5432/nlsql_test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t nl-to-sql:ci .
