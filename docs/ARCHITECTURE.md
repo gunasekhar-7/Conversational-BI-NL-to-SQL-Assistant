@@ -66,7 +66,7 @@
 | Module | File | Owns |
 |--------|------|------|
 | **Validation** | `src/core/sql_validator.py` | Whether a SQL string is safe to run. Walks sqlparse keyword tokens; rejects DDL/DML, multi-statements, `SELECT ... INTO`, and blocked keywords in comments. Returns `(bool, str)`. |
-| **Execution** | `src/core/query_executor.py` | Runs validated SQL against a session. On Postgres, issues `SET LOCAL statement_timeout` first so the cap is scoped to this transaction even on pooled connections. Applies a 1,000-row cap by wrapping in an outer subselect so a trailing comment cannot disable it. Sanitizes driver errors. Suggests a chart type from the result frame (datetime → line, ≥2 numeric → scatter, else bar). |
+| **Execution** | `src/core/query_executor.py` | Runs validated SQL against a session. On Postgres, issues `SET LOCAL statement_timeout` first so the cap is scoped to this transaction even on pooled connections, then prices the bounded statement with `EXPLAIN (FORMAT JSON)` and rejects plans above `EXPLAIN_COST_LIMIT` before execution (fail-open on malformed output; `<= 0` disables). Applies a 1,000-row cap by wrapping in an outer subselect so a trailing comment cannot disable it. Sanitizes driver errors. Suggests a chart type from the result frame (datetime → line, ≥2 numeric → scatter, else bar). |
 | **NL engine** | `src/core/nl_to_sql.py` | Builds the LLM prompt, calls the provider, strips markdown fences and prefixes, and re-validates via `validate_sql` before returning. |
 | **Prompts** | `src/core/prompts.py` | Prompt template and few-shot examples. No runtime logic. |
 | **Schema** | `src/db/schema_inspector.py` | Reads table/column/PK/FK metadata from an engine and formats it for the prompt. |
@@ -84,7 +84,7 @@
 
 ## Key invariants
 
-1. **Validation happens twice.** Once inside `NLToSQL.generate_sql` (rejects unsafe model output before it leaves the engine) and once inside `execute_query` (rejects anything that arrives there, including SQL from non-LLM callers). This is intentional: the executor is the last line of defense.
+1. **Validation happens twice.** Once inside `NLToSQL.generate_sql` (rejects unsafe model output before it leaves the engine) and once inside `execute_query` (rejects anything that arrives there, including SQL from non-LLM callers). This is intentional: the executor is the last line of defense. At execution, safety is three layers: syntactic validation → plan-cost guard (Postgres `EXPLAIN`) → statement timeout.
 
 2. **The row cap cannot be commented out.** `execute_query` never appends `LIMIT` to the raw SQL. It wraps it: `SELECT * FROM (<sql>) AS _capped LIMIT 1000`. A trailing `--` comment in the original SQL terminates at the newline the wrapper inserts.
 

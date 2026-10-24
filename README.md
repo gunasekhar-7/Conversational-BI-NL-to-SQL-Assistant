@@ -98,18 +98,20 @@ psql nl_to_sql < data/sample_data.sql
 pytest -v
 ```
 
-Expected: 115 passing, 3 skipped. The suite is fully offline: it uses an
-in-memory SQLite database and a mocked LLM (no `.env`, no network needed).
+Expected: 123 passing, 7 skipped. The default suite is fully offline: it
+uses an in-memory SQLite database, a mocked LLM, and an in-process Streamlit
+`AppTest` run (no `.env`, no network needed).
 
-The 3 skipped tests are the real-Postgres tier (`tests/integration/test_postgres.py`),
-which proves the SQLite suite cannot: `statement_timeout` killing a slow query,
-the 1,000-row cap, and catalog introspection. Run them with:
+The 7 skipped tests are the three env-gated tiers, each run explicitly:
+
+| Tier | Skip gate | Proves | Run with |
+|------|-----------|--------|----------|
+| Real Postgres (4) | `TEST_DATABASE_URL` | `statement_timeout` kills slow queries, the 1,000-row cap, catalog introspection, and the EXPLAIN cost guard rejecting an over-limit plan | `docker compose -f docker-compose.test.yml up -d --wait` then `TEST_DATABASE_URL=postgresql+psycopg2://nlsql:nlsql@localhost:5433/nlsql_test pytest -m postgres -v` |
+| Live Redis (2) | `TEST_REDIS_URL` | rate-limit buckets are genuinely shared across two limiter instances (wiring checked in a fresh subprocess) | `TEST_REDIS_URL=redis://127.0.0.1:6380/0 pytest -m redis -v` |
+| Real LLM (1) | `RUN_LLM_SMOKE` | a genuine LLM call produces SQL that validates and executes | `RUN_LLM_SMOKE=1 GROQ_API_KEY=gsk-... pytest -m llm -v` |
 
 ```bash
-docker compose -f docker-compose.test.yml up -d --wait
-TEST_DATABASE_URL=postgresql+psycopg2://nlsql:nlsql@localhost:5433/nlsql_test \
-  pytest tests/integration/test_postgres.py -v
-docker compose -f docker-compose.test.yml down
+docker compose -f docker-compose.test.yml down   # after the live tiers
 ```
 
 ### 6. Start Services
@@ -236,13 +238,13 @@ nl-to-sql-assistant/
 pytest -q
 ```
 
-The suite runs without any shell environment set (conftest defaults supply an in-memory SQLite database, a throwaway API key, and a mock LLM). As of the hardening pass:
+The suite runs without any shell environment set (conftest defaults supply an in-memory SQLite database, a throwaway API key, and a mock LLM). As of the verification-depth pass:
 
 ```
-50 passed in ~3s
+123 passed, 7 skipped
 ```
 
-Includes token-validator cases (literals, CTE deletes, SELECT INTO), row-cap wrapping tests, statement-timeout connect args, and API auth (401 without key, 200 with key).
+Includes token-validator cases (literals, CTE deletes, SELECT INTO), row-cap wrapping tests, statement-timeout connect args, API auth (401 without key, 200 with key), the EXPLAIN cost guard (reject / allow / disable / fail-open), and four in-process Streamlit `AppTest` page tests. The 7 skips are the env-gated tiers listed in §5 (4 Postgres, 2 Redis, 1 LLM).
 
 ## Deployment
 
@@ -285,6 +287,7 @@ psql "postgresql://nlsql:nlsql@localhost:5432/nl_to_sql" < data/sample_data.sql
 | `OLLAMA_BASE_URL` | no | `http://localhost:11434` | provider `ollama` |
 | `OLLAMA_MODEL` | no | `llama3.1` | provider `ollama` |
 | `STATEMENT_TIMEOUT_MS` | no | `15000` | applied per transaction via `SET LOCAL` and at connect time |
+| `EXPLAIN_COST_LIMIT` | no | `10000000` | Postgres-only: reject a query whose `EXPLAIN` estimate exceeds this, before execution; `<= 0` disables |
 | `API_KEYS` | no | — | comma-separated extra keys; each gets its own rate-limit bucket |
 | `QUERY_RATE_LIMIT` | no | `30/minute` | slowapi limit string for `POST /query`, per valid key |
 | `REDIS_URL` | no | — | shared rate-limit buckets across workers; falls back to in-memory if unreachable at startup |
@@ -313,12 +316,25 @@ pass) held on to, with the evidence closing each:
 Also closed from the review's remaining findings: W-06 (`SET LOCAL` per
 transaction, dialect-gated), I-03 (chart type follows column semantics),
 I-07 (`__all__` + `py.typed`). Tooling added: ruff gate, multi-stage
-Docker image + compose stack, four-job CI (lint / offline suite /
-Postgres tier / image build).
+Docker image + compose stack, and CI gates (lint / offline suite /
+Postgres tier / Redis tier / image build, plus a manual real-LLM smoke job).
+
+#### Verification-depth re-score (2026-10-24 pass)
+
+The five caps the 9.1 senior rating held on, with the evidence closing each:
+
+| Cap | Closed by | Evidence |
+|-----|-----------|----------|
+| Redis sharing proven only by injection tests | live shared-bucket tier: two independent limiter instances + a fresh-subprocess wiring check | `tests/integration/test_redis_rate_limit.py` — 2/2 pass against Redis 7 (second instance's very first request gets 429) |
+| Zero frontend tests | in-process Streamlit `AppTest` suite driving the real script | `tests/integration/test_frontend_app.py` — 4/4: empty state, successful query history, error surfacing, sidebar schema failure; both mutation probes watched failing |
+| CI never executed | missing jobs added (`redis`, manual `llm-smoke`); full execution still needs a push | `.github/workflows/ci.yml` — jobs validate (yaml ok); caps 2 and 3 are process steps outside code |
+| No real-LLM run | opt-in double-gated smoke test | `tests/integration/test_llm_smoke.py` — gate verified (skips by default); live run awaits a real `GROQ_API_KEY` |
+| Safety only syntactic | Postgres EXPLAIN cost guard before execution | `tests/unit/test_query_executor.py` (reject/allow/disable/fail-open) + `test_postgres.py::test_explain_guard_rejects_over_limit_on_postgres` — 4/4 live |
 
 ## Performance & Safety
 
-- **Statement timeout:** Postgres connections carry `statement_timeout=15000` by default (configurable via `STATEMENT_TIMEOUT_MS`), so one runaway query cannot hold a worker indefinitely.
+- **Plan-cost guard:** on Postgres, the statement to execute is priced with `EXPLAIN (FORMAT JSON)` first; a plan estimated above `EXPLAIN_COST_LIMIT` (default 10,000,000) is rejected before execution with a message carrying only the cost and the limit. Malformed EXPLAIN output fails open — availability first.
+- **Statement timeout:** Postgres connections carry `statement_timeout=15000` by default (configurable via `STATEMENT_TIMEOUT_MS`), so one runaway query that slips past the plan guard cannot hold a worker indefinitely — it is the backstop layer.
 - **Row cap:** 1,000 rows, enforced by wrapping the query in an outer `LIMIT` subselect so a trailing `--` comment cannot disable it.
 - **API authentication:** `POST /api/query` and `GET /api/schema` require an `X-API-Key` header matching `API_KEY`. `/api/health` stays anonymous for liveness probes.
 - **Error handling:** Driver/SQL errors are logged server-side but not returned to API callers.
