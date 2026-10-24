@@ -66,6 +66,10 @@ jobs:
     services:
       redis:
         image: redis:7-alpine
+        # Job runs directly on the runner: without this mapping the container's
+        # port is not reachable on localhost (GitHub service-container docs).
+        ports:
+          - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 3s
