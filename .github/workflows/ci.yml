@@ -1,5 +1,6 @@
 # Gates, mirroring what a release needs: lint, the offline suite, the
-# real-Postgres tier, the Redis shared-bucket tier, and a container build.
+# real-Postgres tier, the Redis shared-bucket tier, a container build, and
+# (manual only) the real-LLM smoke — pushes never spend money.
 # The postgres/redis jobs run their env-gated files as standalone pytest
 # invocations, so a silently-skipped tier (zero selected tests = exit 5)
 # fails the pipeline instead of passing green (plan Review Focus #5).
@@ -9,6 +10,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -85,3 +87,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t nl-to-sql:ci .
+
+  llm-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      RUN_LLM_SMOKE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/integration/test_llm_smoke.py -v
+        if: env.GROQ_API_KEY != ''
