@@ -72,10 +72,86 @@ def test_sets_local_timeout_on_postgres_before_query():
     df, error = execute_query("SELECT 1 AS n", mock_db)
 
     assert error == ""
-    first_stmt = str(mock_db.execute.call_args_list[0].args[0])
-    assert first_stmt.startswith("SET LOCAL statement_timeout")
-    assert str(settings.statement_timeout_ms) in first_stmt
-    assert "_capped" in str(mock_db.execute.call_args_list[1].args[0])
+    stmts = [str(c.args[0]) for c in mock_db.execute.call_args_list]
+    assert stmts[0].startswith("SET LOCAL statement_timeout")
+    assert str(settings.statement_timeout_ms) in stmts[0]
+    assert stmts[1].startswith("EXPLAIN (FORMAT JSON)")
+    # bare MagicMock fetchone -> unparseable -> fail-open -> query runs
+    assert "_capped" in stmts[2]
+
+
+def _pg_mock(responses):
+    """Postgres-mock whose execute() answers by statement prefix."""
+    from types import SimpleNamespace
+
+    mock_db = MagicMock()
+    mock_db.bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def execute(stmt):
+        text_str = str(stmt)
+        if text_str.startswith("SET LOCAL"):
+            return Mock()
+        if text_str.startswith("EXPLAIN"):
+            return responses["explain"]
+        return responses["query"]
+
+    mock_db.execute.side_effect = execute
+    return mock_db
+
+
+def _query_ok():
+    r = Mock()
+    r.fetchall.return_value = [(1,)]
+    r.keys.return_value = ["n"]
+    return r
+
+
+def test_explain_rejects_plan_over_cost_limit():
+    from src.config import settings as cfg
+    assert cfg.explain_cost_limit == 10_000_000.0   # default pinned here
+
+    explain = Mock()
+    explain.fetchone.return_value = ([{"Plan": {"Total Cost": 900_000_000.0}}],)  # cartesian-bomb scale
+    mock_db = _pg_mock({"explain": explain, "query": _query_ok()})
+
+    df, error = execute_query("SELECT id FROM customers", mock_db)
+
+    assert df.empty
+    assert "cost" in error.lower() and "exceeds" in error.lower()
+    assert mock_db.execute.call_count == 2   # SET LOCAL + EXPLAIN only; query never ran
+
+
+def test_explain_allows_plan_within_cost_limit(monkeypatch):
+    monkeypatch.setattr("src.core.query_executor.settings.explain_cost_limit", 100.0)
+    explain = Mock()
+    explain.fetchone.return_value = ([{"Plan": {"Total Cost": 12.5}}],)
+    mock_db = _pg_mock({"explain": explain, "query": _query_ok()})
+
+    df, error = execute_query("SELECT id FROM customers", mock_db)
+
+    assert error == ""
+    assert mock_db.execute.call_count == 3
+
+
+def test_explain_guard_disabled_when_limit_nonpositive(monkeypatch):
+    monkeypatch.setattr("src.core.query_executor.settings.explain_cost_limit", 0)
+    mock_db = _pg_mock({"explain": Mock(), "query": _query_ok()})
+
+    df, error = execute_query("SELECT id FROM customers", mock_db)
+
+    assert error == ""
+    assert mock_db.execute.call_count == 2      # SET LOCAL + query; EXPLAIN never issued
+
+
+def test_explain_malformed_output_fails_open():
+    explain = Mock()
+    explain.fetchone.return_value = ("<not json at all>",)   # str path -> json.loads raises
+    mock_db = _pg_mock({"explain": explain, "query": _query_ok()})
+
+    df, error = execute_query("SELECT id FROM customers", mock_db)
+
+    assert error == ""                            # guard malfunction must not block queries
+    assert mock_db.execute.call_count == 3
 
 
 def test_skips_set_local_on_non_postgres_dialect():

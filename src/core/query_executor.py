@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import pandas as pd
@@ -34,6 +35,25 @@ def bounded_query(sql: str, limit: int = MAX_ROWS) -> str:
     return f"SELECT * FROM (\n{body}\n) AS _capped LIMIT {limit}"
 
 
+def _plan_cost(db: Session, bounded_sql: str) -> float | None:
+    """Estimated cost of `bounded_sql` from EXPLAIN, or None on any failure.
+
+    Fail-open by design: a guard malfunction must not block queries — the
+    statement timeout remains the safety backstop. psycopg2 auto-parses the
+    json column, so fetchone() may return a pre-parsed list; a str (bare
+    mock, text format) goes through json.loads and raises into the same path.
+    """
+    try:
+        row = db.execute(text(f"EXPLAIN (FORMAT JSON) {bounded_sql}")).fetchone()
+        payload = row[0] if row is not None else None
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return float(payload[0]["Plan"]["Total Cost"])
+    except Exception:
+        logger.warning("EXPLAIN cost check failed; proceeding without it", exc_info=True)
+        return None
+
+
 def execute_query(sql: str, db: Session) -> Tuple[pd.DataFrame, str]:
     is_safe, error = validate_sql(sql)
     if not is_safe:
@@ -46,12 +66,25 @@ def execute_query(sql: str, db: Session) -> Tuple[pd.DataFrame, str]:
         # force for exactly this query, and expires on commit/rollback.
         # SET LOCAL is Postgres-only; other dialects get the connect-args
         # behavior (or none) and must never see this statement.
+        bounded = bounded_query(sql)
         if db.bind.dialect.name == "postgresql":
             db.execute(
                 text(f"SET LOCAL statement_timeout = {int(settings.statement_timeout_ms)}")
             )
 
-        result = db.execute(text(bounded_query(sql)))
+            # Plan-cost guard: reject runaway plans before execution. The
+            # bounded form is what would actually run, so its plan is the one
+            # worth pricing. <= 0 disables the guard.
+            if settings.explain_cost_limit > 0:
+                cost = _plan_cost(db, bounded)
+                if cost is not None and cost > settings.explain_cost_limit:
+                    return pd.DataFrame(), (
+                        f"Query plan cost {cost:,.0f} exceeds the limit "
+                        f"({settings.explain_cost_limit:,.0f}). "
+                        "Simplify the question or raise EXPLAIN_COST_LIMIT."
+                    )
+
+        result = db.execute(text(bounded))
         rows = result.fetchall()
         columns = result.keys()
 

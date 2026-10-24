@@ -72,6 +72,12 @@ def test_row_cap_returns_exactly_1000_rows(pg_session):
     assert len(df) == 1000
 
 
+def test_explain_guard_rejects_over_limit_on_postgres(pg_session, monkeypatch):
+    monkeypatch.setattr(settings, "explain_cost_limit", 0.5)   # any real plan costs more
+    df, error = execute_query("SELECT * FROM seed_rows", pg_session)
+    assert df.empty and "cost" in error.lower()
+
+
 def test_inspector_reads_real_catalog(pg_engine):
     schema = inspect_schema(pg_engine)
 
