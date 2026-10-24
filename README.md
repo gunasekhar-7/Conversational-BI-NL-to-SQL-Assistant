@@ -362,4 +362,4 @@ MIT
 
 ---
 
-**Why this matters for recruiters:** SQL is required in 80%+ of data and support roles. This project proves you can bridge natural language understanding (LLM), database expertise (SQL, PostgreSQL), and product engineering (FastAPI, Streamlit) while maintaining safety and measuring real-world accuracy.
+**Why this matters for recruiters:** SQL is required in 80%+ of data and support roles. This project proves you can bridge natural language understanding (LLM), database expertise (SQL, PostgreSQL), and product engineering (FastAPI, Streamlit) while maintaining safety and measuring real-world accuracy."# Conversational-BI-NL-to-SQL-Assistant" 
