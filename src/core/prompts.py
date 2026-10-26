@@ -27,7 +27,6 @@ Question: {question}
 
 SQL Query:"""
 
-
 FEW_SHOT_EXAMPLES = [
     {
         "question": "How many customers do we have?",
@@ -47,7 +46,6 @@ ORDER BY total_revenue DESC""",
     },
 ]
 
-
 EXPLAIN_PROMPT = """You are explaining a SQL query to a data analyst.
 
 Database Schema:
@@ -61,7 +59,6 @@ Generated SQL:
 In one or two sentences, explain what this query does and how it answers the
 question. Mention the tables it reads and any joins or filters that matter.
 Do not rewrite or improve the query. Do not use markdown."""
-
 
 def build_prompt(question: str, schema_description: str) -> str:
     """Compose the full SQL-generation prompt.
@@ -78,7 +75,6 @@ def build_prompt(question: str, schema_description: str) -> str:
         few_shot=few_shot,
         question=question,
     )
-
 
 def build_explain_prompt(question: str, sql: str, schema_description: str) -> str:
     return EXPLAIN_PROMPT.format(
